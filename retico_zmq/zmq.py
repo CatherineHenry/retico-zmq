@@ -288,7 +288,7 @@ class ZMQtoDetectedObjects(retico_core.AbstractModule):
         return [ZeroMQIU]
     @staticmethod
     def output_iu():
-        return ObjectFeaturesIU
+        return DetectedObjectsIU
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -301,6 +301,37 @@ class ZMQtoDetectedObjects(retico_core.AbstractModule):
             # self.current_ius.append(output_iu)
             new_um = retico_core.UpdateMessage.from_iu(output_iu, um)
             
+        return new_um
+
+    def setup(self):
+        pass
+
+
+class ZMQtoObjectFeatures(retico_core.AbstractModule):
+    @staticmethod
+    def name():
+        return "ZMQtoObjectFeatures"
+    @staticmethod
+    def description():
+        return "Convert ZeroMQIU to ObjectFeaturesIU"
+    @staticmethod
+    def input_ius():
+        return [ZeroMQIU]
+    @staticmethod
+    def output_iu():
+        return ObjectFeaturesIU
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def process_update(self,update_message):
+        for iu,um in update_message:
+            # print("getting ZMQ", iu.payload['message'])
+            output_iu = self.create_iu(iu)
+            output_iu.create_from_json(json.loads(iu.payload['message']))
+            # self.current_ius.append(output_iu)
+            new_um = retico_core.UpdateMessage.from_iu(output_iu, um)
+
         return new_um
 
     def setup(self):

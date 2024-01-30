@@ -18,9 +18,7 @@ import threading
 import datetime
 import time
 from collections import deque
-
 from retico_vision import ImageIU, DetectedObjectsIU, ObjectFeaturesIU
-
 
 # TODO: Check if these imports are needed for the Image conversion. If so, we would need
 #       to add numpy and PIL as requirements in the setup.py
@@ -168,6 +166,7 @@ class ZeroMQReader(retico_core.AbstractProducingModule):
         pass
 
 
+
 class ZeroMQWriter(retico_core.AbstractModule):
 
     """A ZeroMQ Writer Module
@@ -225,12 +224,14 @@ class ZeroMQWriter(retico_core.AbstractModule):
             payload["originatingTime"] = datetime.datetime.now().isoformat()
 
             # print(input_iu.payload)
+            # TODO: I might still want this
+            # payload["message"] = json.dumps(input_iu.payload)
             # if isinstance(input_iu, ImageIU) or isinstance(input_iu, DetectedObjectsIU)  or isinstance(input_iu, ObjectFeaturesIU):
-            # payload['message'] = json.dumps(input_iu.get_json())
-            # else:
-            payload["message"] = json.dumps(input_iu.payload)
+            #     payload["image"] = json.dumps(input_iu.image)
             if isinstance(input_iu, ImageIU) or isinstance(input_iu, DetectedObjectsIU)  or isinstance(input_iu, ObjectFeaturesIU):
-                payload["image"] = json.dumps(input_iu.image)
+                payload['message'] = json.dumps(input_iu.get_json())
+            else:
+                payload["message"] = json.dumps(input_iu.payload)
             payload["update_type"] = str(ut)
 
             self.writer.send_multipart(
@@ -241,3 +242,66 @@ class ZeroMQWriter(retico_core.AbstractModule):
         self.writer = WriterSingleton.getInstance().socket
         t = threading.Thread(target=self.run_writer)
         t.start()
+
+
+class ZMQtoImage(retico_core.AbstractModule):
+    @staticmethod
+    def name():
+        return "ZMQtoASR"
+    @staticmethod
+    def description():
+        return "Convert ZeroMQIU to SpeechRecognitionIU"
+    @staticmethod
+    def input_ius():
+        return [ZeroMQIU]
+    @staticmethod
+    def output_iu():
+        return ImageIU
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def process_update(self,update_message):
+
+        for iu,um in update_message:
+            # print("getting ZMQ", iu.payload['message'])
+            output_iu = self.create_iu(iu)
+            output_iu.create_from_json(json.loads(iu.payload['message']))
+            # self.current_ius.append(output_iu)
+            new_um = retico_core.UpdateMessage.from_iu(output_iu, um)
+            
+        return new_um
+
+    def setup(self):
+        pass
+
+
+class ZMQtoDetectedObjects(retico_core.AbstractModule):
+    @staticmethod
+    def name():
+        return "ZMQtoDetectedObjects"
+    @staticmethod
+    def description():
+        return "Convert ZeroMQIU to DetectedObjectsIU"
+    @staticmethod
+    def input_ius():
+        return [ZeroMQIU]
+    @staticmethod
+    def output_iu():
+        return ObjectFeaturesIU
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def process_update(self,update_message):
+        for iu,um in update_message:
+            # print("getting ZMQ", iu.payload['message'])
+            output_iu = self.create_iu(iu)
+            output_iu.create_from_json(json.loads(iu.payload['message']))
+            # self.current_ius.append(output_iu)
+            new_um = retico_core.UpdateMessage.from_iu(output_iu, um)
+            
+        return new_um
+
+    def setup(self):
+        pass

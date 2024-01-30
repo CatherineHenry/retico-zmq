@@ -7,5 +7,5 @@ ReTiCo module for ZeroMQ
 Ubuntu
  
 ```
-sudo apt install python-zmq
+pip install pyzmq
 ```

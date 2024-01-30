@@ -19,6 +19,9 @@ import datetime
 import time
 from collections import deque
 
+from retico_vision import ImageIU, DetectedObjectsIU, ObjectFeaturesIU
+
+
 # TODO: Check if these imports are needed for the Image conversion. If so, we would need
 #       to add numpy and PIL as requirements in the setup.py
 # import numpy as np
@@ -226,6 +229,8 @@ class ZeroMQWriter(retico_core.AbstractModule):
             # payload['message'] = json.dumps(input_iu.get_json())
             # else:
             payload["message"] = json.dumps(input_iu.payload)
+            if isinstance(input_iu, ImageIU) or isinstance(input_iu, DetectedObjectsIU)  or isinstance(input_iu, ObjectFeaturesIU):
+                payload["image"] = json.dumps(input_iu.image)
             payload["update_type"] = str(ut)
 
             self.writer.send_multipart(

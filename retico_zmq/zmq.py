@@ -6,6 +6,8 @@ This module defines two incremental modules ZeroMQReader and ZeroMQWriter that a
 a bridge between ZeroMQ and retico. For this, a ZeroMQIU is defined that contains the
 information revceived over the ZeroMQ bridge.
 """
+import numpy as np
+from PIL.Image import Image
 
 # retico
 import retico_core
@@ -128,7 +130,7 @@ class ZeroMQReader(retico_core.AbstractProducingModule):
 
         # TODO: If we want to have the conversation of images from the payload we would
         #       need to add numpy and PIL as dependencies in the setup.py
-
+        # TODO: add image convert here instead of in modules
         # if "image" in j:
         #     """
         #     convert image types to an imagearray as part of the payload

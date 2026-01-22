@@ -38,7 +38,8 @@ class ReaderSingleton:
         """Virtually private constructor."""
         if ReaderSingleton.__instance == None:
             self.socket = zmq.Context().socket(zmq.SUB)
-            self.socket.connect("tcp://{}:{}".format(ip, port))
+            tcp_address = f"tcp://{ip}:{port}"
+            self.socket.connect(tcp_address)
             ReaderSingleton.__instance = self
 
 
@@ -53,9 +54,9 @@ class WriterSingleton:
     def __init__(self, ip, port):
         """Virtually private constructor."""
         if WriterSingleton.__instance == None:
-            context = zmq.Context()
-            self.socket = context.socket(zmq.PUB)
-            self.socket.bind("tcp://{}:{}".format(ip, port))
+            self.socket = zmq.Context().socket(zmq.PUB)
+            tcp_address = f"tcp://{ip}:{port}"
+            self.socket.bind(tcp_address)
             WriterSingleton.__instance = self
 
 

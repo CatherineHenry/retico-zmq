@@ -18,7 +18,8 @@ import threading
 import datetime
 import time
 from collections import deque
-from retico_vision import ImageIU, DetectedObjectsIU, ObjectFeaturesIU
+from retico_vision import ImageIU, DetectedObjectsIU, ObjectFeaturesIU, ObjectPermanenceIU
+
 
 # TODO: Check if these imports are needed for the Image conversion. If so, we would need
 #       to add numpy and PIL as requirements in the setup.py
@@ -229,7 +230,7 @@ class ZeroMQWriter(retico_core.AbstractModule):
             # payload["message"] = json.dumps(input_iu.payload)
             # if isinstance(input_iu, ImageIU) or isinstance(input_iu, DetectedObjectsIU)  or isinstance(input_iu, ObjectFeaturesIU):
             #     payload["image"] = json.dumps(input_iu.image)
-            if isinstance(input_iu, ImageIU) or isinstance(input_iu, DetectedObjectsIU)  or isinstance(input_iu, ObjectFeaturesIU):
+            if isinstance(input_iu, ImageIU) or isinstance(input_iu, ObjectPermanenceIU)  or isinstance(input_iu, ObjectFeaturesIU):
                 payload['message'] = json.dumps(input_iu.get_json())
             else:
                 payload["message"] = json.dumps(input_iu.payload)

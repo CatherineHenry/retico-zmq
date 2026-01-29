@@ -6,42 +6,89 @@ This module defines two incremental modules ZeroMQReader and ZeroMQWriter that a
 a bridge between ZeroMQ and retico. For this, a ZeroMQIU is defined that contains the
 information revceived over the ZeroMQ bridge.
 """
-import numpy as np
-from PIL.Image import Image
+import pickle
+import threading
+import time
+from collections import deque
+
+# zeromq & supporting libraries
+import zmq
 
 # retico
 import retico_core
 
-# zeromq & supporting libraries
-import zmq, json
-import threading
-import datetime
-import time
-from collections import deque
-from retico_vision import ImageIU, DetectedObjectsIU, ObjectFeaturesIU, ObjectPermanenceIU
 
+class ZMQReaderModule(retico_core.AbstractModule):
 
-# TODO: Check if these imports are needed for the Image conversion. If so, we would need
-#       to add numpy and PIL as requirements in the setup.py
-# import numpy as np
-# from PIL import Image
+    """A ZeroMQ Reader Module
 
+    Attributes:
 
-class ReaderSingleton:
-    __instance = None
+    """
+
+    def name(self):
+        return f"[ZMQ] {str(self.expected_iu_type)}"
 
     @staticmethod
-    def getInstance():
-        """Static access method."""
-        return ReaderSingleton.__instance
+    def description():
+        return "A Module providing reading from a ZeroMQ bus"
 
-    def __init__(self, ip, port):
-        """Virtually private constructor."""
-        if ReaderSingleton.__instance == None:
-            self.socket = zmq.Context().socket(zmq.SUB)
-            tcp_address = f"tcp://{ip}:{port}"
-            self.socket.connect(tcp_address)
-            ReaderSingleton.__instance = self
+    @staticmethod
+    def input_ius():
+        return []
+
+    def output_iu(self):
+        return self.expected_iu_type
+
+    def __init__(self, ip, port, topic, expected_iu_type, **kwargs):
+        """Initializes the ZeroMQReader.
+
+        Args: topic(str): the topic/scope where the information will be read.
+
+        """
+        super().__init__(**kwargs)
+        self.queue = deque()
+        self.target_iu_types = {}
+        self.socket = zmq.Context().socket(zmq.SUB)
+        self.socket.connect("tcp://{}:{}".format(ip, port))
+        self.topic = topic
+        self.socket.subscribe(topic)
+        self.expected_iu_type = expected_iu_type
+
+    def process_update(self, input_iu):
+        """
+        As an edge case, process_update is not used for Reader Modules because updates do not come from being subscribed to another module.
+        Rather, they come from populating a queue with messages from the ZMQ writer filtered by the appropriate topic
+        """
+        # the _run function in the Abstract module we inherit expects to be able to call process update. Return None as a no-op
+        return None
+
+    def process_message(self):
+        """
+        Read ZMQ message from reader queue, load input IU from pickle, and pass along
+        """
+        while True:
+            time.sleep(0.02) # prevent tight loop if queue is empty
+            if len(self.queue) > 0:
+                message = self.queue.popleft()
+                input_iu, update_type = pickle.loads(message)
+                um = retico_core.UpdateMessage.from_iu(input_iu, update_type) # pass input IU on using its own update type
+                self.append(um)
+
+    def run_reader(self):
+        """
+        Wait for messages from the writer for the defined topic, add to queue to be processed
+        ZMQ handles topic management
+        """
+        while True:
+            topic,message = self.socket.recv_multipart()
+            self.queue.append(message)
+
+    def prepare_run(self):
+        t = threading.Thread(target=self.run_reader, daemon=True)
+        t.start()
+        t = threading.Thread(target=self.process_message, daemon=True)
+        t.start()
 
 
 class WriterSingleton:
@@ -54,120 +101,26 @@ class WriterSingleton:
 
     def __init__(self, ip, port):
         """Virtually private constructor."""
-        if WriterSingleton.__instance == None:
-            self.socket = zmq.Context().socket(zmq.PUB)
-            tcp_address = f"tcp://{ip}:{port}"
-            self.socket.bind(tcp_address)
+        if WriterSingleton.__instance is None:
+            context = zmq.Context()
+            self.queue = deque()
+            self.socket = context.socket(zmq.PUB)
+            self.socket.bind("tcp://{}:{}".format(ip, port))
             WriterSingleton.__instance = self
+            t = threading.Thread(target=self.run_writer)
+            t.daemon = True
+            t.start()
 
+    def add_to_queue(self, data):
+        self.queue.append(data)
 
-class ZeroMQIU(retico_core.IncrementalUnit):
-    @staticmethod
-    def type():
-        return "ZeroMQ Incremental Unit"
-
-    def __init__(
-        self,
-        creator=None,
-        iuid=0,
-        previous_iu=None,
-        grounded_in=None,
-        payload=None,
-        **kwargs
-    ):
-        """Initialize the DialogueActIU with act and concepts.
-
-        Args:
-            act (string): A representation of the act.
-            concepts (dict): A representation of the concepts as a dictionary.
-        """
-        super().__init__(
-            creator=creator,
-            iuid=iuid,
-            previous_iu=previous_iu,
-            grounded_in=grounded_in,
-            payload=payload,
-        )
-
-    def set_payload(self, payload):
-        self.payload = payload
-
-
-class ZeroMQReader(retico_core.AbstractProducingModule):
-
-    """A ZeroMQ Reader Module
-
-    Attributes:
-
-    """
-
-    @staticmethod
-    def name():
-        return "ZeroMQ Reader Module"
-
-    @staticmethod
-    def description():
-        return "A Module providing reading from a ZeroMQ bus"
-
-    @staticmethod
-    def output_iu():
-        return ZeroMQIU
-
-    def __init__(self, topic, **kwargs):
-        """Initializes the ZeroMQReader.
-
-        Args: topic(str): the topic/scope where the information will be read.
-
-        """
-        super().__init__(**kwargs)
-        self.topic = topic
-        self.reader = None
-
-    def process_update(self, input_iu):
-        """
-        This assumes that the message is json formatted, then packages it as payload into an IU
-        """
-        [topic, message] = self.reader.recv_multipart()
-        j = json.loads(message)
-        output_iu = self.create_iu()
-
-        # TODO: If we want to have the conversation of images from the payload we would
-        #       need to add numpy and PIL as dependencies in the setup.py
-        # TODO: add image convert here instead of in modules
-        # if "image" in j:
-        #     """
-        #     convert image types to an imagearray as part of the payload
-        #     """
-        #     payload = {}
-        #     payload["image"] = Image.fromarray(np.array(j["image"], dtype="uint8"))
-        #     payload["nframes"] = j["nframes"]
-        #     payload["rate"] = j["rate"]
-        #     output_iu.set_payload(payload)
-        # else:
-        #     output_iu.set_payload(j)
-        output_iu.set_payload(j)
-
-        update_message = retico_core.UpdateMessage()
-
-        if "update_type" not in j:
-            print("Incoming IU has no update_type!")
-        if j["update_type"] == "UpdateType.ADD":
-            update_message.add_iu(output_iu, retico_core.UpdateType.ADD)
-        elif j["update_type"] == "UpdateType.REVOKE":
-            update_message.add_iu(output_iu, retico_core.UpdateType.REVOKE)
-        elif j["update_type"] == "UpdateType.COMMIT":
-            update_message.add_iu(output_iu, retico_core.UpdateType.COMMIT)
-
-        return update_message
-
-    def prepare_run(self):
-        self.reader = ReaderSingleton.getInstance().socket
-        self.reader.setsockopt(zmq.SUBSCRIBE, self.topic.encode())
-
-    def setup(self):
-        pass
-
-
+    def run_writer(self):
+        while True:
+            if len(self.queue) == 0:
+                time.sleep(0.1)
+                continue
+            topic, message, update_type = self.queue.popleft()
+            self.socket.send_multipart([topic.encode(), pickle.dumps((message, update_type))])
 
 class ZeroMQWriter(retico_core.AbstractModule):
 
@@ -202,139 +155,17 @@ class ZeroMQWriter(retico_core.AbstractModule):
 
         """
         super().__init__(**kwargs)
-        self.topic = topic.encode()
+        self.topic = topic
         self.queue = deque()  # no maxlen
-        self.writer = None
+        self.writer = WriterSingleton.getInstance()
 
     def process_update(self, update_message):
         """
-        This assumes that the message is json formatted, then packages it as payload into an IU
+        Adds the IU to the writer queue
         """
-        for um in update_message:
-            self.queue.append(um)
-
+        for input_iu,update_type in update_message:
+            self.writer.add_to_queue([self.topic, input_iu, update_type])
         return None
 
-    def run_writer(self):
-
-        while True:
-            if len(self.queue) == 0:
-                time.sleep(0.1)
-                continue
-            input_iu, ut = self.queue.popleft()
-            payload = {}
-            payload["originatingTime"] = datetime.datetime.now().isoformat()
-
-            # print(input_iu.payload)
-            # TODO: I might still want this
-            # payload["message"] = json.dumps(input_iu.payload)
-            # if isinstance(input_iu, ImageIU) or isinstance(input_iu, DetectedObjectsIU)  or isinstance(input_iu, ObjectFeaturesIU):
-            #     payload["image"] = json.dumps(input_iu.image)
-            if isinstance(input_iu, ImageIU) or isinstance(input_iu, ObjectPermanenceIU)  or isinstance(input_iu, ObjectFeaturesIU):
-                payload['message'] = json.dumps(input_iu.get_json())
-            else:
-                payload["message"] = json.dumps(input_iu.payload)
-            payload["update_type"] = str(ut)
-
-            self.writer.send_multipart(
-                [self.topic, json.dumps(payload).encode("utf-8")]
-            )
-
-    def setup(self):
-        self.writer = WriterSingleton.getInstance().socket
-        t = threading.Thread(target=self.run_writer)
-        t.start()
-
-
-class ZMQtoImage(retico_core.AbstractModule):
-    @staticmethod
-    def name():
-        return "ZMQtoASR"
-    @staticmethod
-    def description():
-        return "Convert ZeroMQIU to SpeechRecognitionIU"
-    @staticmethod
-    def input_ius():
-        return [ZeroMQIU]
-    @staticmethod
-    def output_iu():
-        return ImageIU
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def process_update(self,update_message):
-
-        for iu,um in update_message:
-            # print("getting ZMQ", iu.payload['message'])
-            output_iu = self.create_iu(iu)
-            output_iu.create_from_json(json.loads(iu.payload['message']))
-            # self.current_ius.append(output_iu)
-            new_um = retico_core.UpdateMessage.from_iu(output_iu, um)
-            
-        return new_um
-
-    def setup(self):
-        pass
-
-
-class ZMQtoDetectedObjects(retico_core.AbstractModule):
-    @staticmethod
-    def name():
-        return "ZMQtoDetectedObjects"
-    @staticmethod
-    def description():
-        return "Convert ZeroMQIU to DetectedObjectsIU"
-    @staticmethod
-    def input_ius():
-        return [ZeroMQIU]
-    @staticmethod
-    def output_iu():
-        return DetectedObjectsIU
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def process_update(self,update_message):
-        for iu,um in update_message:
-            # print("getting ZMQ", iu.payload['message'])
-            output_iu = self.create_iu(iu)
-            output_iu.create_from_json(json.loads(iu.payload['message']))
-            # self.current_ius.append(output_iu)
-            new_um = retico_core.UpdateMessage.from_iu(output_iu, um)
-            
-        return new_um
-
-    def setup(self):
-        pass
-
-
-class ZMQtoObjectFeatures(retico_core.AbstractModule):
-    @staticmethod
-    def name():
-        return "ZMQtoObjectFeatures"
-    @staticmethod
-    def description():
-        return "Convert ZeroMQIU to ObjectFeaturesIU"
-    @staticmethod
-    def input_ius():
-        return [ZeroMQIU]
-    @staticmethod
-    def output_iu():
-        return ObjectFeaturesIU
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def process_update(self,update_message):
-        for iu,um in update_message:
-            # print("getting ZMQ", iu.payload['message'])
-            output_iu = self.create_iu(iu)
-            output_iu.create_from_json(json.loads(iu.payload['message']))
-            # self.current_ius.append(output_iu)
-            new_um = retico_core.UpdateMessage.from_iu(output_iu, um)
-
-        return new_um
-
-    def setup(self):
+    def prepare_run(self):
         pass

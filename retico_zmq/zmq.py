@@ -6,6 +6,7 @@ This module defines two incremental modules ZeroMQReader and ZeroMQWriter that a
 a bridge between ZeroMQ and retico. For this, a ZeroMQIU is defined that contains the
 information revceived over the ZeroMQ bridge.
 """
+import datetime
 import pickle
 import threading
 import time
@@ -27,7 +28,7 @@ class ZMQReaderModule(retico_core.AbstractModule):
     """
 
     def name(self):
-        return f"[ZMQ] {str(self.expected_iu_type)}"
+        return f"ZMQ Reader - Forwards input IUs "
 
     @staticmethod
     def description():
@@ -35,12 +36,15 @@ class ZMQReaderModule(retico_core.AbstractModule):
 
     @staticmethod
     def input_ius():
+        # Input IUs are not relevant here because we receive IUs from ZMQ message queue not from the output of a module
         return []
 
-    def output_iu(self):
-        return self.expected_iu_type
+    @staticmethod
+    def output_iu():
+        # output IU does not have any impact because this module does not create any IUs, just passes existing ones on.
+        pass
 
-    def __init__(self, ip, port, topic, expected_iu_type, **kwargs):
+    def __init__(self, ip, port, topic, **kwargs):
         """Initializes the ZeroMQReader.
 
         Args: topic(str): the topic/scope where the information will be read.
@@ -53,7 +57,6 @@ class ZMQReaderModule(retico_core.AbstractModule):
         self.socket.connect("tcp://{}:{}".format(ip, port))
         self.topic = topic
         self.socket.subscribe(topic)
-        self.expected_iu_type = expected_iu_type
 
     def process_update(self, input_iu):
         """
@@ -71,7 +74,10 @@ class ZMQReaderModule(retico_core.AbstractModule):
             time.sleep(0.02) # prevent tight loop if queue is empty
             if len(self.queue) > 0:
                 message = self.queue.popleft()
+                pickle_load_start_time = time.time()
                 input_iu, update_type = pickle.loads(message)
+                print(f"Took {time.time() - pickle_load_start_time} seconds to unpickle IU")
+                print(f"Incoming message {input_iu.type()} is {input_iu.age()} seconds old")
                 um = retico_core.UpdateMessage.from_iu(input_iu, update_type) # pass input IU on using its own update type
                 self.append(um)
 
@@ -82,6 +88,7 @@ class ZMQReaderModule(retico_core.AbstractModule):
         """
         while True:
             topic,message = self.socket.recv_multipart()
+            print(f"Receiving message over ZMQ: {datetime.datetime.now().isoformat()}")
             self.queue.append(message)
 
     def prepare_run(self):
@@ -120,7 +127,11 @@ class WriterSingleton:
                 time.sleep(0.1)
                 continue
             topic, message, update_type = self.queue.popleft()
-            self.socket.send_multipart([topic.encode(), pickle.dumps((message, update_type))])
+            serialize_start_time = time.time()
+            serialized_message = pickle.dumps((message, update_type))
+            print(f"Took {time.time() - serialize_start_time} seconds to pickle IU ({len(serialized_message)} bytes)")
+            print(f"Sending message over ZMQ: {datetime.datetime.now().isoformat()}")
+            self.socket.send_multipart([topic.encode(), serialized_message])
 
 class ZeroMQWriter(retico_core.AbstractModule):
 

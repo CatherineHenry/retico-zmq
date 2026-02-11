@@ -132,7 +132,9 @@ class WriterSingleton:
             topic, message, update_type = self.queue.popleft()
             # Keep 4 (0 indexed) layers of 'grounded_in', 'previous_iu', and 'creator' delete the rest to reduce the
             # size of messages we are sending over ZMQ
-            delete_nested_attributes(obj=message, target_attrs=['grounded_in', 'previous_iu'], target_deletion_depth=self.max_nested_iu_depth)
+            # NOTE: This does break IU chain of information
+            if self.max_nested_iu_depth != -1: # Set max_nested_iu_depth to -1 if you do not want any data deleted before serializing
+                delete_nested_attributes(obj=message, target_attrs=['grounded_in', 'previous_iu'], target_deletion_depth=self.max_nested_iu_depth)
             serialize_start_time = time.time()
             serialized_message = pickle.dumps((message, update_type))
             print(f"Took {time.time() - serialize_start_time} seconds to pickle IU ({len(serialized_message)} bytes)")

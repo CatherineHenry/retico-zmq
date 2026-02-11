@@ -87,6 +87,7 @@ class ZMQReaderModule(retico_core.AbstractModule):
         ZMQ handles topic management
         """
         while True:
+            time.sleep(0.02)
             topic,message = self.socket.recv_multipart()
             print(f"Receiving message over ZMQ: {datetime.datetime.now().isoformat()}")
             self.queue.append(message)
@@ -106,9 +107,11 @@ class WriterSingleton:
         """Static access method."""
         return WriterSingleton.__instance
 
-    def __init__(self, ip, port):
+    def __init__(self, ip, port, max_nested_iu_depth=3):
         """Virtually private constructor."""
         if WriterSingleton.__instance is None:
+            # To prevent sending too large of an object over zmq, reduce the number of nested IUs.
+            self.max_nested_iu_depth = max_nested_iu_depth
             context = zmq.Context()
             self.queue = deque()
             self.socket = context.socket(zmq.PUB)
@@ -124,9 +127,12 @@ class WriterSingleton:
     def run_writer(self):
         while True:
             if len(self.queue) == 0:
-                time.sleep(0.1)
+                time.sleep(0.02)
                 continue
             topic, message, update_type = self.queue.popleft()
+            # Keep 4 (0 indexed) layers of 'grounded_in', 'previous_iu', and 'creator' delete the rest to reduce the
+            # size of messages we are sending over ZMQ
+            delete_nested_attributes(obj=message, target_attrs=['grounded_in', 'previous_iu'], target_deletion_depth=self.max_nested_iu_depth)
             serialize_start_time = time.time()
             serialized_message = pickle.dumps((message, update_type))
             print(f"Took {time.time() - serialize_start_time} seconds to pickle IU ({len(serialized_message)} bytes)")
@@ -180,3 +186,26 @@ class ZeroMQWriter(retico_core.AbstractModule):
 
     def prepare_run(self):
         pass
+
+def delete_nested_attributes(obj, target_attrs, target_deletion_depth, current_depth=0, ):
+    """
+    Recursively delete specified attributes at target depth -- all nested target attributes will be set to 'None' after the target deletion depth
+    Will recurse through target attributes to find if they contain any of the target attributes
+     i.e. (grounded_in -> previous_iu -> grounded_in -> previous_iu)
+    """
+    # We reached the target depth, delete the attribute
+    if current_depth == target_deletion_depth:
+        for target_attr in target_attrs:
+            if isinstance(obj, dict) and target_attr in obj:
+                obj[target_attr] = None
+            elif hasattr(obj, '__dict__') and hasattr(obj, target_attr):
+                setattr(obj, target_attr, None)
+        return
+
+    for target_attr in target_attrs:
+        # check if dict
+        if isinstance(obj, dict) and target_attr in obj:
+            delete_nested_attributes(obj[target_attr], target_attrs, target_deletion_depth, current_depth + 1)
+        # check if a python obj and if it has the attr
+        elif hasattr(obj, '__dict__') and hasattr(obj, target_attr):
+            delete_nested_attributes(getattr(obj, target_attr), target_attrs, target_deletion_depth, current_depth + 1)

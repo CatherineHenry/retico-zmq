@@ -7,6 +7,7 @@ a bridge between ZeroMQ and retico. For this, a ZeroMQIU is defined that contain
 information revceived over the ZeroMQ bridge.
 """
 import datetime
+import gc
 import pickle
 import threading
 import time
@@ -75,9 +76,13 @@ class ZMQReaderModule(retico_core.AbstractModule):
             if len(self.queue) > 0:
                 message = self.queue.popleft()
                 pickle_load_start_time = time.time()
+                gc.disable()
                 input_iu, update_type = pickle.loads(message)
-                print(f"Took {time.time() - pickle_load_start_time} seconds to unpickle IU")
-                print(f"Incoming message {input_iu.type()} is {input_iu.age()} seconds old")
+                flow_uuid = input_iu.meta_data.get('flow_uuid')
+                gc.enable()
+                print(f"[{flow_uuid}] Receiving message over ZMQ: {datetime.datetime.now().isoformat()}")
+                print(f"\t[{flow_uuid}] Took {time.time() - pickle_load_start_time} seconds to unpickle IU")
+                print(f"\t[{flow_uuid}] Incoming message {input_iu.type()} is {input_iu.age()} seconds old")
                 um = retico_core.UpdateMessage.from_iu(input_iu, update_type) # pass input IU on using its own update type
                 self.append(um)
 
@@ -89,7 +94,6 @@ class ZMQReaderModule(retico_core.AbstractModule):
         while True:
             time.sleep(0.02)
             topic,message = self.socket.recv_multipart()
-            print(f"Receiving message over ZMQ: {datetime.datetime.now().isoformat()}")
             self.queue.append(message)
 
     def prepare_run(self):
@@ -136,10 +140,14 @@ class WriterSingleton:
             if self.max_nested_iu_depth != -1: # Set max_nested_iu_depth to -1 if you do not want any data deleted before serializing
                 delete_nested_attributes(obj=message, target_attrs=['grounded_in', 'previous_iu'], target_deletion_depth=self.max_nested_iu_depth)
             serialize_start_time = time.time()
-            serialized_message = pickle.dumps((message, update_type))
-            print(f"Took {time.time() - serialize_start_time} seconds to pickle IU ({len(serialized_message)} bytes)")
-            print(f"Sending message over ZMQ: {datetime.datetime.now().isoformat()}")
-            self.socket.send_multipart([topic.encode(), serialized_message])
+            gc.disable()
+            serialized_message = pickle.dumps((message, update_type), protocol=pickle.HIGHEST_PROTOCOL)
+            gc.enable()
+            flow_uuid = message.meta_data.get('flow_uuid')
+            print(f"[{flow_uuid}] Outgoing message {message.type()} is {message.age()} seconds old")
+            print(f"\t[{flow_uuid}] Took {time.time() - serialize_start_time} seconds to pickle IU ({len(serialized_message)} bytes)")
+            print(f"\t[{flow_uuid}] Sending message over ZMQ: {datetime.datetime.now().isoformat()}")
+            self.socket.send_multipart([topic.encode(), serialized_message], copy=False)
 
 class ZeroMQWriter(retico_core.AbstractModule):
 
